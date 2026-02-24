@@ -4,7 +4,7 @@
 # This script runs Claude in firejail with filesystem isolation
 # while maintaining access to current directory and Claude configuration
 # Unlike static .profile file - this script adaptively selects active node.js environment
-# which is helpful to systems running NVM and would be impossible with a static .profile file.
+# which is helpful to systems running mise and would be impossible with a static .profile file.
 
 set -euo pipefail
 
@@ -16,9 +16,22 @@ real_path() {
 }
 
 CURRENT_DIR="$(pwd)"
-NPM_PREFIX="$(npm config get prefix)"
-NODE_PATH="$(real_path node)"
-CLAUDE_PATH="$(real_path claude)"
+BREW_ROOT="/home/linuxbrew"
+
+MISE_BIN="$(real_path mise)"
+MISE_DATA="$HOME/.local/share/mise"
+
+NODE_BIN="$(mise which node)"
+NODE_INSTALL_ROOT="$(mise where node)"
+
+UV_BIN="$(real_path uv)"
+UVX_BIN="$(real_path uvx)"
+UV_DATA="$HOME/.local/share/uv"
+UV_CACHE="$HOME/.cache/uv"
+
+CLAUDE_BIN="$(mise which claude)"
+CLAUDE_SETUP="exec \"$NODE_BIN\" \"$CLAUDE_BIN\" --dangerously-skip-permissions \"\$@\""
+SHELL_SETUP="eval \"\$($BREW_ROOT/.linuxbrew/bin/brew shellenv)\"; eval \"\$($MISE_BIN activate bash)\"; $CLAUDE_SETUP"
 
 MCP_DIRS=(
   "$HOME/mcp-servers/mcp-server-xlsx"
@@ -29,19 +42,28 @@ MCP_DIRS=(
 # =============================================================================
 FIREJAIL_ARGS=(
     # Security restrictions
-    --noprofile               # Use noprofile to avoid default restrictions that might block large directories
-    --private-tmp             # Private /tmp directory
-    --noroot                  # Disable su/sudo inside sandbox
-    --caps.drop=all           # Drop all capabilities
-    --nonewprivs              # Prevent privilege escalation
-    --nogroups                # Don't inherit supplementary groups
-    
+    --noprofile                # Use noprofile to avoid default restrictions that might block large directories
+    --allusers                 # Permits access for /home/linuxbrew as it would be hidden
+    --private-tmp              # Private /tmp directory
+    --noroot                   # Disable su/sudo inside sandbox
+    --caps.drop=all            # Drop all capabilities
+    --nonewprivs               # Prevent privilege escalation
+    --nogroups                 # Don't inherit supplementary groups
+
     # Filesystem access - whitelist specific paths only
     --whitelist="$CURRENT_DIR"              # Allow access to current directory
     --read-write="$CURRENT_DIR"             # Make current directory writable
-    --whitelist="$NODE_PATH"                # Allow access to node binary
-    --whitelist="$CLAUDE_PATH"              # Allow access to claude script
-    --whitelist="$(dirname "$CLAUDE_PATH")" # Allow access to claude script directory
+    --whitelist="$BREW_ROOT"                # Allow access to brew root (when mise and uv use it)
+    --whitelist="$MISE_BIN"                 # Allow access to mise to manage projects
+    --whitelist="$MISE_DATA"                # Allow access to mise-installed languages
+    --whitelist="$NODE_BIN"                 # Allow access to node binary
+    --whitelist="$NODE_INSTALL_ROOT"        # Allow access to the root of the node installation
+    --whitelist="$UV_BIN"                   # Allow access to uv for python-only projects
+    --whitelist="$UVX_BIN"                  # Allow access to uvx for executions of tools
+    --whitelist="$UV_DATA"                  # Allow access to uv-installed python versions
+    --whitelist="$UV_CACHE"                 # Allow access to uv-installed package cache
+    --whitelist="$CLAUDE_BIN"               # Allow access to claude script
+    --whitelist="$(dirname "$CLAUDE_BIN")"  # Allow access to claude script directory
 )
 
 # Add Claude configuration access if files/directories exist
@@ -77,4 +99,4 @@ done
 # Run the sandbox
 # =============================================================================
 echo "Starting claude in firejail sandbox..."
-exec firejail "${FIREJAIL_ARGS[@]}" "$NODE_PATH" "$CLAUDE_PATH" "--dangerously-skip-permissions" "$@"
+exec firejail "${FIREJAIL_ARGS[@]}" /bin/bash -c "$SHELL_SETUP" -- "$@"
