@@ -8,29 +8,39 @@
 
 set -euo pipefail
 
-# Capture current environment
+# =============================================================================
+# Integrate into current developer environment
+# =============================================================================
+real_path() {
+    readlink -f "$(which "$1")"
+}
+
 CURRENT_DIR="$(pwd)"
 NPM_PREFIX="$(npm config get prefix)"
-NODE_PATH="$(which node)"
-CLAUDE_PATH="$(readlink -f $(which claude))"
+NODE_PATH="$(real_path node)"
+CLAUDE_PATH="$(real_path claude)"
 
+MCP_DIRS=(
+  "$HOME/mcp-servers/mcp-server-xlsx"
+)
+
+# =============================================================================
 # Build firejail command arguments
+# =============================================================================
 FIREJAIL_ARGS=(
-    # Use noprofile to avoid default restrictions that might block large directories
-    --noprofile
-    
     # Security restrictions
-    --private-tmp              # Private /tmp directory
-    --noroot                   # Disable su/sudo inside sandbox
+    --noprofile               # Use noprofile to avoid default restrictions that might block large directories
+    --private-tmp             # Private /tmp directory
+    --noroot                  # Disable su/sudo inside sandbox
     --caps.drop=all           # Drop all capabilities
     --nonewprivs              # Prevent privilege escalation
     --nogroups                # Don't inherit supplementary groups
     
     # Filesystem access - whitelist specific paths only
-    --whitelist="$CURRENT_DIR"            # Allow access to current directory
-    --read-write="$CURRENT_DIR"           # Make current directory writable
-    --whitelist="$NODE_PATH"              # Allow access to node binary
-    --whitelist="$CLAUDE_PATH"            # Allow access to claude script
+    --whitelist="$CURRENT_DIR"              # Allow access to current directory
+    --read-write="$CURRENT_DIR"             # Make current directory writable
+    --whitelist="$NODE_PATH"                # Allow access to node binary
+    --whitelist="$CLAUDE_PATH"              # Allow access to claude script
     --whitelist="$(dirname "$CLAUDE_PATH")" # Allow access to claude script directory
 )
 
@@ -39,7 +49,6 @@ if [ -d "$HOME/.claude" ]; then
     FIREJAIL_ARGS+=(--whitelist="$HOME/.claude")
     FIREJAIL_ARGS+=(--read-write="$HOME/.claude")
 fi
-
 if [ -f "$HOME/.claude.json" ]; then
     FIREJAIL_ARGS+=(--whitelist="$HOME/.claude.json")
     FIREJAIL_ARGS+=(--read-write="$HOME/.claude.json")
@@ -51,9 +60,21 @@ if [ -d "./.claude" ]; then
     FIREJAIL_ARGS+=(--read-write="$CURRENT_DIR/.claude")
 fi
 
+# Loop through local mcp server directories
+for dir in "${MCP_DIRS[@]}"; do
+    if [ -d "$dir" ]; then
+        FIREJAIL_ARGS+=(--whitelist="$dir")
+        echo "Whitelisting MCP Directory: $dir"
+    else
+        echo "Warning: MCP directory not found, skipping: $dir"
+    fi
+done
+
 # Network access (allow by default, can be restricted with --net=none)
 # FIREJAIL_ARGS+=(--net=none)  # Uncomment to disable network access
 
-# Run Claude in firejail sandbox
+# =============================================================================
+# Run the sandbox
+# =============================================================================
 echo "Starting claude in firejail sandbox..."
 exec firejail "${FIREJAIL_ARGS[@]}" "$NODE_PATH" "$CLAUDE_PATH" "--dangerously-skip-permissions" "$@"
